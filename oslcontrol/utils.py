@@ -23,33 +23,24 @@ class opensourceleg:
         self.app_type = self.fxs.get_app_type(self.dev_id)
 
         # Loadcell paramters
-        self.loadcell_matrix = np.zeros(shape=(6, 6), dtype=np.double)
+        self.loadcell_matrix = np.array([(-38.72600, -1817.74700, 9.84900, 43.37400, -44.54000, 1824.67000),
+                                        (-8.61600, 1041.14900, 18.86100, -2098.82200, 31.79400, 1058.6230),
+                                        (-1047.16800, 8.63900, -1047.28200, -20.70000, -1073.08800, -8.92300),
+                                        (20.57600, -0.04000, -0.24600, 0.55400, -21.40800, -0.47600),
+                                        (-12.13400, -1.10800, 24.36100, 0.02300, -12.14100, 0.79200),
+                                        (-0.65100, -28.28700, 0.02200, -25.23000, 0.47300, -27.3070)]) 
+
         self.amp_gain = 125.0
         self.exc = 5.0
 
-    def start_streaming(self, frequency=500, log_en=True):
+    def start(self, frequency=500, log_en=False):
         """
-        Start streaming data from the actuator
+        Starts the actuator
 
         Parameters:
         -----------
         """
         self.fxs.start_streaming(self.dev_id, freq=frequency, log_en=log_en)
-
-    def stop_streaming(self):
-        """
-        Stop streaming data from the actuator
-
-        Parameters:
-        -----------
-        """
-        self.fxs.stop_streaming(self.dev_id)
-
-    def start(self):
-        """
-        Starts the OSL
-        """
-        self.fxs.start_streaming()
 
     def stop(self):
         """
@@ -66,7 +57,7 @@ class opensourceleg:
         Parameters:
         -----------
 
-        """
+        """       
         self.amp_gain = amp_gain
         self.exc = exc
         self.loadcell_matrix = loadcell_matrix
@@ -94,7 +85,7 @@ class opensourceleg:
         )
 
         for i in range(number_of_iterations):
-            loadcell_offset = self.get_loadcell_data(loadcell_raw)
+            loadcell_offset = self.get_loadcell_data(loadcell_raw, initial_loadcell_zero)
             loadcell_zero = (loadcell_offset + loadcell_zero) / 2.0
 
         return loadcell_zero
@@ -151,14 +142,15 @@ class opensourceleg:
             loadcell = self.get_loadcell_data(loadcell_raw, loadcell_zero)
             print(loadcell)
 
+        time.sleep(1)
         self.stop()
 
 
 if __name__ == "__main__":
     start = time.perf_counter()
 
-    osl = opensourceleg(port="/dev/tty.usbmodem00000000001A1", baud_rate=230400)
-    osl.read()
+    osl = opensourceleg(port="/dev/ttyACM0", baud_rate=230400)
+    osl.read(15)
 
     # fxs = flex.FlexSEA()
     # dev_id = fxs.open('/dev/ttyACM0', 230400, log_level=6)
