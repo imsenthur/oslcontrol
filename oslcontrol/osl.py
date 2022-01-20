@@ -6,14 +6,19 @@ from fileinput import filename
 from unicodedata import name
 
 import numpy as np
+import scipy.signal
 from flexsea import flexsea as flex
 from flexsea import fxEnums as fxe
 from flexsea import fxUtils as fxu
+from scipy import interpolate
 
 
 class joint:
-    def __init__(self, name, fxs, dev_id, homing_voltage=2500, homing_rate=0.1) -> None:
+    def __init__(
+        self, name, fxs, dev_id, homing_voltage=2500, homing_rate=0.005
+    ) -> None:
         self.name = name
+        self.filename = "./encoder_map_" + self.name + ".txt"
 
         self.fxs = fxs
         self.dev_id = dev_id
@@ -25,6 +30,7 @@ class joint:
         self.deg2count = 2 ** 14 / 360
 
     def home(self, save=True):
+        print("*** Initiating Homing Routine ***")
         filename = "./encoder_map_" + self.name + ".txt"
 
         minpos_motor, minpos_joint, min_output = self._homing_routine(direction=1.0)
@@ -37,14 +43,22 @@ class joint:
             f"\nMaximum Motor angle: {maxpos_motor}, Maximum Joint angle: {maxpos_joint}"
         )
 
+        max_output = np.array(max_output).reshape((len(max_output), 2))
+        output_motor_count = max_output[:, 1]
+
+        _, ids = np.unique(output_motor_count, return_index=True)
+
         if save:
-            self.save_encoder_map(filename=filename, data=max_output)
+            self.save_encoder_map(data=max_output[ids])
+
+        print("*** Homing Successfull ***")
 
     def _homing_routine(self, direction):
         """
         Private function to aid homing process
         """
         output = []
+        velocity_threshold = 0
         go_on = True
 
         data = self.fxs.read_device(self.dev_id)
@@ -55,29 +69,25 @@ class joint:
             self.fxs.send_motor_command(
                 self.dev_id, fxe.FX_VOLTAGE, direction * self.homing_voltage
             )
-            cpos_motor = self.fxs.read_device(self.dev_id).mot_ang
+            time.sleep(0.05)
 
-            time.sleep(0.5)
-            output.append(
-                [self.fxs.read_device(self.dev_id).ank_ang * self.count2deg]
-                + [cpos_motor]
-            )
+            data = self.fxs.read_device(self.dev_id)
+            cpos_motor = data.mot_ang
+            initial_velocity = data.ank_vel
+            output.append([data.ank_ang * self.count2deg] + [cpos_motor])
+
+            velocity_threshold = abs(initial_velocity / 2.0)
 
             while go_on:
                 time.sleep(self.homing_rate)
-                ppos_motor = cpos_motor
-                cpos_motor = self.fxs.read_device(self.dev_id).mot_ang
+                data = self.fxs.read_device(self.dev_id)
+                cpos_motor = data.mot_ang
+                cvel_joint = data.ank_vel
 
-                dpos_motor = cpos_motor - ppos_motor
+                output.append([data.ank_ang * self.count2deg] + [cpos_motor])
 
-                output.append(
-                    [self.fxs.read_device(self.dev_id).ank_ang * self.count2deg]
-                    + [cpos_motor]
-                )
-
-                if -1.0 * self.deg2count / 2.0 <= dpos_motor <= self.deg2count / 2.0:
+                if abs(cvel_joint) <= velocity_threshold:
                     self.fxs.send_motor_command(self.dev_id, fxe.FX_VOLTAGE, 0)
-                    data = self.fxs.read_device(self.dev_id)
                     current_motor_position = data.mot_ang
                     current_joint_position = data.ank_ang
 
@@ -89,18 +99,46 @@ class joint:
 
         return current_motor_position, current_joint_position, output
 
-    def save_encoder_map(self, filename, data):
-        f = open(filename, "a")
-        output_string = []
+    def save_encoder_map(self, data):
+        """
+        Saves encoder_map: [Joint angle, Motor count] to a text file
+        """
+        # Saving reversed array because of our joint's zero position
+        np.savetxt(self.filename, data, fmt="%.5f")
 
-        for val in data:
-            for v in val:
-                output_string.append(str(v) + " ")
-            output_string.append("\n")
+    def load_encoder_map(self):
+        """
+        Loads Joint angle array, Motor count array, Min Joint angle, and Max Joint angle
+        """
+        data = np.loadtxt(self.filename, dtype=np.float64)
+        self.joint_angle_array = data[:, 0]
+        self.motor_count_array = np.array(data[:, 1], dtype=np.int32)
 
-        f.write("".join(output_string))
-        f.write("\n")
-        f.close()
+        self.min_joint_angle = np.min(self.joint_angle_array)
+        self.max_joint_angle = np.max(self.joint_angle_array)
+
+        self.joint_angle_array = self.max_joint_angle - self.joint_angle_array
+
+        # Applying a median filter with a kernel size of 3
+        self.joint_angle_array = scipy.signal.medfilt(
+            self.joint_angle_array, kernel_size=3
+        )
+        self.motor_count_array = scipy.signal.medfilt(
+            self.motor_count_array, kernel_size=3
+        )
+
+    def joint_angle_2_motor_count(self, desired_joint_angle):
+        desired_joint_angle_array = np.array(desired_joint_angle)
+        np.set_printoptions(suppress=True)
+
+        func = interpolate.interp1d(self.joint_angle_array, self.motor_count_array)
+        desired_motor_count = np.interp(
+            desired_joint_angle, self.joint_angle_array, self.motor_count_array
+        )
+        return desired_motor_count
+
+    def motor_count_2_joint_angle(self):
+        pass
 
 
 class opensourceleg:
@@ -147,6 +185,11 @@ class opensourceleg:
 
         if input("Do you want to initiate homing process? (y/n) ") == "y":
             self.knee.home()
+
+        self.knee.load_encoder_map()
+
+        # TEST
+        print(self.knee.joint_angle_2_motor_count(0))
 
     def stop(self):
         """
