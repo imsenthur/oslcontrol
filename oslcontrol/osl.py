@@ -13,7 +13,93 @@ from flexsea import fxUtils as fxu
 from scipy import interpolate
 
 
-class joint:
+class State:
+    """
+    State
+    """
+
+    def __init__(self, joint, theta, k, b) -> None:
+        # Impedance parameters
+        self.joint = joint
+        self.theta = theta
+        self.k = k
+        self.b = b
+
+    def on_event(self, criteria):
+        """
+        Handles transition between states
+        """
+        pass
+
+    def __repr__(self) -> str:
+        """
+        Uses __str__ method to describe the State.
+        """
+        return self.__str__()
+
+    def __str__(self) -> str:
+        """
+        Returns name of the current State.
+        """
+        return self.__class__.__name__
+
+
+class EStance(State):
+    """
+    Early/Mid Stance
+    """
+
+    def __init__(self, joint, theta=0.0, k=130.0, b=0.0) -> None:
+        super().__init__(joint, theta, k, b)
+        self.transition_state = LStance(self.joint, 10, 200, 15)
+
+    def on_event(self, criteria):
+        if criteria[0] > self.joint.joint_angle_2_motor_count(45):
+            return self.transition_state
+
+        return self
+
+
+class LStance(State):
+    """
+    Late Stance
+    """
+
+    def __init__(self, joint, theta=0.0, k=100.0, b=0.0) -> None:
+        super().__init__(joint, theta, k, b)
+
+    def on_event(self, criteria):
+        if criteria[0] < self.joint.joint_angle_2_motor_count(45):
+            return EStance(self.joint)
+
+        return self
+
+
+class ESwing(State):
+    """
+    Early Swing
+    """
+
+    def __init__(self, joint, theta, k, b) -> None:
+        super().__init__(joint, theta, k, b)
+
+    def on_event(self, criteria):
+        return super().on_event(criteria)
+
+
+class LSwing(State):
+    """
+    Late Swing
+    """
+
+    def __init__(self, joint, theta, k, b) -> None:
+        super().__init__(joint, theta, k, b)
+
+    def on_event(self, criteria):
+        return super().on_event(criteria)
+
+
+class Joint:
     def __init__(
         self, name, fxs, dev_id, homing_voltage=2500, homing_rate=0.005
     ) -> None:
@@ -28,6 +114,9 @@ class joint:
 
         self.count2deg = 360 / 2 ** 14
         self.deg2count = 2 ** 14 / 360
+
+        self.bit_2_degree_per_sec = 1 / 32.8
+        self.bit_2_g = 1 / 8192
 
     def home(self, save=True):
         print("*** Initiating Homing Routine ***")
@@ -137,11 +226,13 @@ class joint:
         )
         return desired_motor_count
 
-    def motor_count_2_joint_angle(self):
-        pass
+    def get_orientation(self, raw_acc, raw_g):
+        acc = raw_acc * self.bit_2_g
+        gyro = raw_g * self.bit_2_degree_per_sec
+        return acc, gyro
 
 
-class opensourceleg:
+class OSL:
     """
     The OSL class
     """
@@ -156,7 +247,10 @@ class opensourceleg:
         self.app_type = self.fxs.get_app_type(self.dev_id)
 
         # Joint parameters
-        self.knee = joint(name="knee", fxs=self.fxs, dev_id=self.dev_id)
+        self.knee = Joint(name="knee", fxs=self.fxs, dev_id=self.dev_id)
+
+        # State initialization
+        self.state = EStance(self.knee, 0.0, 130, 0.0)
 
         # Loadcell paramters
         self.loadcell_matrix = np.array(
@@ -188,8 +282,8 @@ class opensourceleg:
 
         self.knee.load_encoder_map()
 
-        # TEST
-        print(self.knee.joint_angle_2_motor_count(0))
+    def on_event(self, criteria):
+        self.state = self.state.on_event(criteria)
 
     def stop(self):
         """
@@ -230,7 +324,7 @@ class opensourceleg:
         """
         Obtains the initial loadcell reading (aka) loadcell_zero
         """
-        initial_loadcell_zero = np.zeros((6, 1), dtype=np.double)
+        initial_loadcell_zero = np.zeros((1, 6), dtype=np.double)
         loadcell_zero = loadcell_offset = self.get_loadcell_data(
             loadcell_raw, initial_loadcell_zero
         )
@@ -285,12 +379,19 @@ class opensourceleg:
         return motor, joint, acc, gyro, loadcell
 
     def read(self, duration=15, time_step=0.01):
+        """
+        Reads data from the actuator for 'n' number of seconds.
+        """
         number_of_iterations = int(duration / time_step)
 
-        # Start streaming data from the actpack
         self.start()
 
+        now = then = time.time()
+
         for i in range(number_of_iterations):
+            now = time.time()
+            dt = now - then
+
             time.sleep(time_step)
             fxu.clear_terminal()
 
@@ -301,18 +402,64 @@ class opensourceleg:
                 loadcell_zero = self.get_loadcell_zero(loadcell_raw)
 
             loadcell = self.get_loadcell_data(loadcell_raw, loadcell_zero)
-            print(loadcell)
+            np.set_printoptions(suppress=True)
+            print(self.knee.get_orientation(acc, gyro))
+
+            then = now
 
         time.sleep(1)
         self.stop()
+
+    def walk(self, duration=15, time_step=0.01):
+        """
+        Walks 'n' number of seconds.
+        """
+        number_of_iterations = int(duration / time_step)
+
+        self.start()
+        self.fxs.set_gains(self.dev_id, 40, 400, 0, 0, 0, 128)
+        time.sleep(0.5)
+
+        if input("Start walking? (y/n) ") == "y":
+            try:
+                now = then = time.time()
+
+                for i in range(number_of_iterations):
+                    now = time.time()
+                    dt = now - then
+
+                    self.fxs.send_motor_command(self.dev_id, fxe.FX_CURRENT, 0.0)
+                    time.sleep(time_step)
+
+                    fxu.clear_terminal()
+
+                    motor, joint, acc, gyro, loadcell_raw = self.get_actuator_data()
+
+                    if i == 0:
+                        print("*** Obtaining initial value of loadcell ***")
+                        loadcell_zero = self.get_loadcell_zero(loadcell_raw)
+
+                    loadcell = self.get_loadcell_data(loadcell_raw, loadcell_zero)
+                    np.set_printoptions(suppress=True)
+                    self.on_event(motor)
+                    print(self.state, self.state.theta, self.state.k, self.state.b)
+
+                    then = now
+
+                time.sleep(1)
+                self.stop()
+
+            except KeyboardInterrupt:
+                print("Keyboard Interrupt detected, exiting the program.")
+                time.sleep(1)
+                self.stop()
 
 
 if __name__ == "__main__":
     start = time.perf_counter()
 
-    osl = opensourceleg(port="/dev/ttyACM0", baud_rate=230400)
-    osl.start()
-    osl.stop()
+    osl = OSL(port="/dev/ttyACM0", baud_rate=230400)
+    osl.walk(15)
 
     finish = time.perf_counter()
     print(f"Script ended at {finish-start:0.4f}")
