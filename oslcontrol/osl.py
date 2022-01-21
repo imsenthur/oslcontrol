@@ -427,8 +427,8 @@ class OSL:
         self.fxs.start_streaming(self.dev_id, freq=frequency, log_en=log_en)
         time.sleep(2)
 
-        # if input("Do you want to initiate homing process? (y/n) ") == "y":
-        #     self.knee.home()
+        if input("Do you want to initiate homing process? (y/n) ") == "y":
+            self.knee.home()
 
         self.knee.load_encoder_map()
 
@@ -569,14 +569,32 @@ class OSL:
         time.sleep(1)
         self._stop_streaming_data()
 
-    def estance2lstance(self, data):
-        if data[0] > self.knee.joint_angle_2_motor_count(45):
+    def estance_lstance(self, data):
+        if data[0] > self.knee.joint_angle_2_motor_count(10) and data[
+            0
+        ] < self.knee.joint_angle_2_motor_count(60):
             return True
         else:
             return False
 
-    def lstance2estance(self, data):
-        if data[0] < self.knee.joint_angle_2_motor_count(45):
+    def lstance_eswing(self, data):
+        if data[0] > self.knee.joint_angle_2_motor_count(60) and data[
+            0
+        ] < self.knee.joint_angle_2_motor_count(90):
+            return True
+        else:
+            return False
+
+    def eswing_lswing(self, data):
+        if data[0] > self.knee.joint_angle_2_motor_count(90) and data[
+            0
+        ] < self.knee.joint_angle_2_motor_count(120):
+            return True
+        else:
+            return False
+
+    def lswing_estance(self, data):
+        if data[0] < self.knee.joint_angle_2_motor_count(10):
             return True
         else:
             return False
@@ -596,28 +614,46 @@ class OSL:
                 now = then = time.time()
 
                 # Create states
-                early_stance = State("EStance")
-                late_stance = State("LStance")
-                early_swing = State("ESwing")
-                late_swing = State("LSwing")
+                early_stance = State(
+                    "EStance", self.knee.joint_angle_2_motor_count(10), 130.0, 0.0
+                )
+                late_stance = State(
+                    "LStance", self.knee.joint_angle_2_motor_count(10), 150.0, 0.0
+                )
+                early_swing = State(
+                    "ESwing", self.knee.joint_angle_2_motor_count(85), 30.0, 40.0
+                )
+                late_swing = State(
+                    "LSwing", self.knee.joint_angle_2_motor_count(0), 20.0, 60.0
+                )
 
                 # Create events
-                initial_flexion = Event("ini_flex")
-                late_flexion = Event("late_flex")
+                foot_flat = Event("foot_flat")
+                heel_off = Event("heel_off")
+                toe_off = Event("toe_off")
+                heel_strike = Event("heel_strike")
 
                 self.add_state(early_stance, initial_state=True)
                 self.add_state(late_stance)
                 self.add_state(early_swing)
                 self.add_state(late_swing)
 
-                self.add_event(initial_flexion)
-                self.add_event(late_flexion)
+                self.add_event(foot_flat)
+                self.add_event(heel_off)
+                self.add_event(toe_off)
+                self.add_event(heel_strike)
 
                 self.add_transition(
-                    early_stance, late_stance, initial_flexion, self.estance2lstance
+                    early_stance, late_stance, foot_flat, self.estance_lstance
                 )
                 self.add_transition(
-                    late_stance, early_stance, late_flexion, self.lstance2estance
+                    late_stance, early_swing, heel_off, self.lstance_eswing
+                )
+                self.add_transition(
+                    early_swing, late_swing, toe_off, self.eswing_lswing
+                )
+                self.add_transition(
+                    late_swing, early_stance, heel_strike, self.lswing_estance
                 )
 
                 self.start()
@@ -631,7 +667,7 @@ class OSL:
                     self.fxs.send_motor_command(self.dev_id, fxe.FX_CURRENT, 0.0)
                     time.sleep(time_step)
 
-                    # fxu.clear_terminal()
+                    fxu.clear_terminal()
 
                     motor, joint, acc, gyro, loadcell_raw = self._get_sensor_data()
 
