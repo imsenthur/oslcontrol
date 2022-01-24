@@ -398,7 +398,7 @@ class OSL:
         self._exited = False
         self._current_state.start(data)
 
-    def stop(self, data: Any):
+    def stop(self, data: Any = None):
         if not (self._initial_state or self._current_state):
             raise ValueError("OSL isn't active.")
 
@@ -784,6 +784,8 @@ class OSL:
 
                     then = now
 
+                print("Stopping SM and exiting the program.")
+                self.stop()
                 time.sleep(1)
                 self._stop_streaming_data()
 
@@ -805,7 +807,7 @@ if __name__ == "__main__":
     start = time.perf_counter()
 
     osl = OSL(port="/dev/ttyACM0", baud_rate=230400)
-    osl.walk(10)
+    osl.walk(20)
 
     finish = time.perf_counter()
     print(f"Script ended at {finish-start:0.4f}")
