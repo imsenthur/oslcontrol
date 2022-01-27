@@ -64,6 +64,24 @@ class State:
         for c in self._exit_callbacks:
             c(data)
 
+    def increase_theta(self, increment=45.5111):
+        self._theta = self._theta + increment
+
+    def decrease_theta(self, decrement=45.5111):
+        self._theta = self._theta - decrement
+
+    def increase_stiffness(self, increment=10):
+        self._k = self._k + increment
+
+    def decrease_stiffness(self, decrement=10):
+        self._k = self._k - decrement
+
+    def increase_damping(self, increment=10):
+        self._b = self._b + increment
+
+    def decrease_damping(self, decrement=10):
+        self._b = self._b - decrement
+
     @property
     def name(self):
         return self._name
@@ -212,7 +230,7 @@ class Data:
 
 class Joint:
     def __init__(
-        self, name, fxs, dev_id, homing_voltage=2500, homing_rate=0.005
+        self, name, fxs, dev_id, homing_voltage=2500, homing_rate=0.001
     ) -> None:
         self._name = name
         self._filename = "./encoder_map_" + self._name + ".txt"
@@ -629,7 +647,7 @@ class OSL:
         self._stop_streaming_data()
 
     def estance_lstance(self, data):
-        print(self.knee.data.fz, self.load_lstance)
+        # print(self.knee.data.fz, self.load_lstance)
 
         if self.knee.data.fz < self.load_lstance:
             return True
@@ -637,7 +655,7 @@ class OSL:
             return False
 
     def lstance_eswing(self, data):
-        print(self.knee.data.fz, self.load_eswing)
+        # print(self.knee.data.fz, self.load_eswing)
 
         if self.knee.data.fz > self.load_eswing:
             return True
@@ -646,8 +664,9 @@ class OSL:
 
     def eswing_lswing(self, data):
         if (
-            self.knee.data.motor_angle < self.theta_eswing_lswing
-            and self.knee.data.motor_velocity < self.theta_dot_eswing_lswing
+            self.knee.data.motor_angle > self.theta_eswing_lswing
+            and (self.knee.data.motor_velocity * self.knee._count2deg)
+            < self.theta_dot_eswing_lswing
         ):
             return True
         else:
@@ -659,16 +678,30 @@ class OSL:
         else:
             False
 
-    def lswing_estance(self, data):
+    def tswing_estance(self, data):
+        print(
+            self.knee.data.fz,
+            self.load_estance,
+            self.knee.data.motor_angle,
+            self.theta_lswing_estance,
+        )
+        print(self.knee.data.fz < self.load_estance)
+        print(self.knee.data.motor_angle < self.theta_lswing_estance)
         if (
             self.knee.data.fz < self.load_estance
-            and self.knee.data.motor_angle > self.theta_lswing_estance
+            and self.knee.data.motor_angle < self.theta_lswing_estance
         ):
             return True
         else:
             return False
 
-    def walk(self, duration=15, time_step=0.01):
+    def lswing_tswing(self, data):
+        if self.knee.data.motor_angle < self.theta_lswing_estance:
+            return True
+        else:
+            return False
+
+    def walk(self, duration=15, time_step=0.001):
         """
         Walks for 'n' number of seconds.
         """
@@ -681,7 +714,7 @@ class OSL:
         k_FF = 128
 
         self.theta_eswing_lswing = self.knee.joint_angle_2_motor_count(60)
-        self.theta_lswing_estance = self.knee.joint_angle_2_motor_count(20)
+        self.theta_lswing_estance = self.knee.joint_angle_2_motor_count(30)
 
         self.fxs.set_gains(self.dev_id, kp_I, ki_I, 0, 0, 0, k_FF)
         time.sleep(0.5)
@@ -692,22 +725,26 @@ class OSL:
 
                 # Create states
                 early_stance = State(
-                    "EStance", self.knee.joint_angle_2_motor_count(10), 130.0, 0.0
+                    "EStance", self.knee.joint_angle_2_motor_count(0.1), 130.0, 0.0
                 )
                 late_stance = State(
-                    "LStance", self.knee.joint_angle_2_motor_count(10), 150.0, 0.0
+                    "LStance", self.knee.joint_angle_2_motor_count(0.1), 175.0, 0.0
                 )
                 early_swing = State(
-                    "ESwing", self.knee.joint_angle_2_motor_count(85), 30.0, 40.0
+                    "ESwing", self.knee.joint_angle_2_motor_count(62), 40.0, 40.0
                 )
                 late_swing = State(
-                    "LSwing", self.knee.joint_angle_2_motor_count(0), 20.0, 60.0
+                    "LSwing", self.knee.joint_angle_2_motor_count(30), 30.0, 120.0
+                )
+                terminal_swing = State(
+                    "TSwing", self.knee.joint_angle_2_motor_count(20), 10.0, 360.0
                 )
 
                 # Create events
                 foot_flat = Event("foot_flat")
                 heel_off = Event("heel_off")
                 toe_off = Event("toe_off")
+                pre_heel_strike = Event("pre_heel_strike")
                 heel_strike = Event("heel_strike")
                 misc = Event("misc")
 
@@ -715,11 +752,14 @@ class OSL:
                 self.add_state(late_stance)
                 self.add_state(early_swing)
                 self.add_state(late_swing)
+                self.add_state(terminal_swing)
 
                 self.add_event(foot_flat)
                 self.add_event(heel_off)
                 self.add_event(toe_off)
+                self.add_event(pre_heel_strike)
                 self.add_event(heel_strike)
+                self.add_event(misc)
 
                 self.add_transition(
                     early_stance, late_stance, foot_flat, self.estance_lstance
@@ -734,7 +774,10 @@ class OSL:
                     early_swing, early_stance, misc, self.eswing_estance
                 )
                 self.add_transition(
-                    late_swing, early_stance, heel_strike, self.lswing_estance
+                    late_swing, terminal_swing, pre_heel_strike, self.lswing_tswing
+                )
+                self.add_transition(
+                    terminal_swing, early_stance, heel_strike, self.tswing_estance
                 )
 
                 self.start()
@@ -749,20 +792,15 @@ class OSL:
                     fxu.clear_terminal()
 
                     self._get_sensor_data(i, dt)
-                    print(self.knee.data.fz)
-
                     np.set_printoptions(suppress=True)
 
                     # Create a data structure for events
                     self.on_event([i, dt])
 
                     print(
-                        kp_I,
-                        ki_I,
-                        0,
+                        self.current_state.equilibrium_angle,
                         self.current_state.stiffness,
                         self.current_state.damping,
-                        k_FF,
                     )
 
                     self.fxs.send_motor_command(
@@ -807,7 +845,7 @@ if __name__ == "__main__":
     start = time.perf_counter()
 
     osl = OSL(port="/dev/ttyACM0", baud_rate=230400)
-    osl.walk(20)
+    osl.walk(45)
 
     finish = time.perf_counter()
     print(f"Script ended at {finish-start:0.4f}")
