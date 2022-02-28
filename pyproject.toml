@@ -41,7 +41,7 @@ flexsea = "^7.2.3"
 pyserial = "^3.5"
 
 [tool.poetry.dev-dependencies]
-bandit = "^1.7.1"
+bandit = "^1.7.3"
 black = {version = "^21.10b0", allow-prereleases = true}
 darglint = "^1.8.1"
 isort = {extras = ["colors"], version = "^5.10.1"}
