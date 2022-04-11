@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 from typing import Any, Callable, List, Optional
 
+import json
+import threading
 import time
 from calendar import day_abbr
 
@@ -9,6 +11,7 @@ import scipy.signal
 from flexsea import flexsea as flex
 from flexsea import fxEnums as fxe
 from flexsea import fxUtils as fxu
+from pyPS4Controller.controller import Controller
 
 
 class State:
@@ -367,12 +370,17 @@ class Joint:
         return self._name
 
 
-class OSL:
+class OSL(Controller):
     """
     The OSL class
     """
 
     def __init__(self, port, baud_rate, debug_level=0) -> None:
+        # Controller Init
+        Controller.__init__(
+            self, interface="/dev/input/js0", connecting_using_ds4drv=False
+        )
+
         self.port = port
         self.baud_rate = baud_rate
 
@@ -400,6 +408,8 @@ class OSL:
         self.add_state(self._exit_state)
         self._exited = True
 
+        self.state_to_be_tuned: Optional[State] = None
+
         # State Machine Transition Variables
         # Verify sign convention for loadcell data
         self.load_lstance = -1.0 * self.body_weight * 0.3 * 4.4
@@ -413,6 +423,7 @@ class OSL:
             raise ValueError("Initial state hasn't been set.")
 
         self._current_state = self._initial_state
+        self.state_to_be_tuned = self._initial_state
         self._exited = False
         self._current_state.start(data)
 
@@ -485,6 +496,60 @@ class OSL:
             self._transitions.append(transition)
 
         return transition
+
+    # ---------------------------------------------------------- #
+
+    def on_up_arrow_press(self):
+        self.state_to_be_tuned = self._states[1]
+        print(f"State to be Tuned: {self.state_to_be_tuned.name}")
+
+    def on_right_arrow_press(self):
+        self.state_to_be_tuned = self._states[2]
+        print(f"State to be Tuned: {self.state_to_be_tuned.name}")
+
+    def on_down_arrow_press(self):
+        self.state_to_be_tuned = self._states[3]
+        print(f"State to be Tuned: {self.state_to_be_tuned.name}")
+
+    def on_left_arrow_press(self):
+        self.state_to_be_tuned = self._states[4]
+        print(f"State to be Tuned: {self.state_to_be_tuned.name}")
+
+    def on_R1_press(self):
+        self.state_to_be_tuned.increase_stiffness()
+        print(f"Increased Stiffness of state: {self.state_to_be_tuned.name}")
+
+    def on_L1_press(self):
+        self.state_to_be_tuned.decrease_stiffness()
+        print(f"Decreased Stiffness of state: {self.state_to_be_tuned.name}")
+
+    def on_circle_press(self):
+        self.state_to_be_tuned.increase_damping()
+        print(f"Increased Damping of state: {self.state_to_be_tuned.name}")
+
+    def on_square_press(self):
+        self.state_to_be_tuned.decrease_damping()
+        print(f"Decreased Damping of state: {self.state_to_be_tuned.name}")
+
+    def on_triangle_press(self):
+        self.state_to_be_tuned.increase_theta()
+        print(f"Increased Eq. Angle of state: {self.state_to_be_tuned.name}")
+
+    def on_x_press(self):
+        self.state_to_be_tuned.decrease_theta()
+        print(f"Decreased Eq. Angle of state: {self.state_to_be_tuned.name}")
+
+    # ---------------------------------------------------------- #
+
+    def save_state_variables(self):
+        jstr = ""
+        with open("state_variables.json", "w") as f:
+            for state in self._states:
+                jstr = jstr + json.dumps(state.__dict__) + "\n"
+
+            json.dump(jstr, f)
+
+    # ---------------------------------------------------------- #
 
     def _start_streaming_data(self, frequency=500, log_en=False):
         """
@@ -719,118 +784,115 @@ class OSL:
         self.fxs.set_gains(self.dev_id, kp_I, ki_I, 0, 0, 0, k_FF)
         time.sleep(0.5)
 
-        if input("Start walking? (y/n) ") == "y":
-            try:
-                now = then = time.time()
+        try:
+            now = then = time.time()
 
-                # Create states
-                early_stance = State(
-                    "EStance", self.knee.joint_angle_2_motor_count(0.1), 130.0, 0.0
-                )
-                late_stance = State(
-                    "LStance", self.knee.joint_angle_2_motor_count(0.1), 175.0, 0.0
-                )
-                early_swing = State(
-                    "ESwing", self.knee.joint_angle_2_motor_count(62), 40.0, 40.0
-                )
-                late_swing = State(
-                    "LSwing", self.knee.joint_angle_2_motor_count(30), 30.0, 120.0
-                )
-                terminal_swing = State(
-                    "TSwing", self.knee.joint_angle_2_motor_count(20), 10.0, 360.0
-                )
+            # Create states
+            early_stance = State(
+                "EStance", self.knee.joint_angle_2_motor_count(0.1), 130.0, 0.0
+            )
+            late_stance = State(
+                "LStance", self.knee.joint_angle_2_motor_count(0.1), 175.0, 0.0
+            )
+            early_swing = State(
+                "ESwing", self.knee.joint_angle_2_motor_count(62), 40.0, 40.0
+            )
+            late_swing = State(
+                "LSwing", self.knee.joint_angle_2_motor_count(30), 30.0, 120.0
+            )
+            terminal_swing = State(
+                "TSwing", self.knee.joint_angle_2_motor_count(20), 10.0, 360.0
+            )
 
-                # Create events
-                foot_flat = Event("foot_flat")
-                heel_off = Event("heel_off")
-                toe_off = Event("toe_off")
-                pre_heel_strike = Event("pre_heel_strike")
-                heel_strike = Event("heel_strike")
-                misc = Event("misc")
+            # Create events
+            foot_flat = Event("foot_flat")
+            heel_off = Event("heel_off")
+            toe_off = Event("toe_off")
+            pre_heel_strike = Event("pre_heel_strike")
+            heel_strike = Event("heel_strike")
+            misc = Event("misc")
 
-                self.add_state(early_stance, initial_state=True)
-                self.add_state(late_stance)
-                self.add_state(early_swing)
-                self.add_state(late_swing)
-                self.add_state(terminal_swing)
+            self.add_state(early_stance, initial_state=True)
+            self.add_state(late_stance)
+            self.add_state(early_swing)
+            self.add_state(late_swing)
+            self.add_state(terminal_swing)
 
-                self.add_event(foot_flat)
-                self.add_event(heel_off)
-                self.add_event(toe_off)
-                self.add_event(pre_heel_strike)
-                self.add_event(heel_strike)
-                self.add_event(misc)
+            self.add_event(foot_flat)
+            self.add_event(heel_off)
+            self.add_event(toe_off)
+            self.add_event(pre_heel_strike)
+            self.add_event(heel_strike)
+            self.add_event(misc)
 
-                self.add_transition(
-                    early_stance, late_stance, foot_flat, self.estance_lstance
-                )
-                self.add_transition(
-                    late_stance, early_swing, heel_off, self.lstance_eswing
-                )
-                self.add_transition(
-                    early_swing, late_swing, toe_off, self.eswing_lswing
-                )
-                self.add_transition(
-                    early_swing, early_stance, misc, self.eswing_estance
-                )
-                self.add_transition(
-                    late_swing, terminal_swing, pre_heel_strike, self.lswing_tswing
-                )
-                self.add_transition(
-                    terminal_swing, early_stance, heel_strike, self.tswing_estance
-                )
+            self.add_transition(
+                early_stance, late_stance, foot_flat, self.estance_lstance
+            )
+            self.add_transition(late_stance, early_swing, heel_off, self.lstance_eswing)
+            self.add_transition(early_swing, late_swing, toe_off, self.eswing_lswing)
+            self.add_transition(early_swing, early_stance, misc, self.eswing_estance)
+            self.add_transition(
+                late_swing, terminal_swing, pre_heel_strike, self.lswing_tswing
+            )
+            self.add_transition(
+                terminal_swing, early_stance, heel_strike, self.tswing_estance
+            )
 
-                self.start()
+            self.start()
 
-                print("Starting OSL with state: ", self.current_state.name)
+            print("Starting OSL with state: ", self.current_state.name)
 
-                for i in range(number_of_iterations):
-                    now = time.time()
-                    dt = now - then
+            for i in range(number_of_iterations):
+                now = time.time()
+                dt = now - then
 
-                    time.sleep(time_step)
-                    fxu.clear_terminal()
+                time.sleep(time_step)
+                fxu.clear_terminal()
 
-                    self._get_sensor_data(i, dt)
-                    np.set_printoptions(suppress=True)
+                self._get_sensor_data(i, dt)
+                np.set_printoptions(suppress=True)
 
-                    # Create a data structure for events
-                    self.on_event([i, dt])
+                # Create a data structure for events
+                self.on_event([i, dt])
 
-                    print(
+                print(
+                    "Theta: {}, Stiffness: {}, Damping: {}".format(
                         self.current_state.equilibrium_angle,
                         self.current_state.stiffness,
                         self.current_state.damping,
                     )
+                )
 
-                    self.fxs.send_motor_command(
-                        self.dev_id,
-                        fxe.FX_IMPEDANCE,
-                        self.current_state.equilibrium_angle,
-                    )
-                    self.fxs.set_gains(
-                        self.dev_id,
-                        kp_I,
-                        ki_I,
-                        0,
-                        int(self.current_state.stiffness),
-                        int(self.current_state.damping),
-                        k_FF,
-                    )
+                self.fxs.send_motor_command(
+                    self.dev_id,
+                    fxe.FX_IMPEDANCE,
+                    self.current_state.equilibrium_angle,
+                )
+                self.fxs.set_gains(
+                    self.dev_id,
+                    kp_I,
+                    ki_I,
+                    0,
+                    int(self.current_state.stiffness),
+                    int(self.current_state.damping),
+                    k_FF,
+                )
+                print(f"State that's being tuned: {self.state_to_be_tuned.name}")
+                print(f"*** Current State: {self.current_state.name} ***")
 
-                    print(self.current_state.name)
+                then = now
 
-                    then = now
+            print("Stopping SM and exiting the program.")
+            self.save_state_variables()
+            # self.stop()
+            time.sleep(1)
+            self._stop_streaming_data()
 
-                print("Stopping SM and exiting the program.")
-                self.stop()
-                time.sleep(1)
-                self._stop_streaming_data()
-
-            except KeyboardInterrupt:
-                print("Keyboard Interrupt detected, exiting the program.")
-                time.sleep(1)
-                self._stop_streaming_data()
+        except KeyboardInterrupt:
+            print("Keyboard Interrupt detected, exiting the program.")
+            self.save_state_variables()
+            time.sleep(1)
+            self._stop_streaming_data()
 
     @property
     def exit_state(self):
@@ -845,7 +907,13 @@ if __name__ == "__main__":
     start = time.perf_counter()
 
     osl = OSL(port="/dev/ttyACM0", baud_rate=230400)
-    osl.walk(45)
+
+    walk_thread = threading.Thread(target=osl.walk, args=(45,))
+    controller_thread = threading.Thread(target=osl.listen, args=(45,))
+
+    if input("Start walking? (y/n) ") == "y":
+        walk_thread.start()
+        controller_thread.start()
 
     finish = time.perf_counter()
     print(f"Script ended at {finish-start:0.4f}")
