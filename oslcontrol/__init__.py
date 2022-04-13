@@ -5,6 +5,7 @@ import sys
 from importlib import metadata as importlib_metadata
 
 from .osl import *
+from .statemachine import *
 from .utils import *
 
 

@@ -5,200 +5,15 @@ import json
 import threading
 import time
 from calendar import day_abbr
+from sre_parse import State
 
 import numpy as np
 import scipy.signal
 from flexsea import flexsea as flex
 from flexsea import fxEnums as fxe
 from flexsea import fxUtils as fxu
-from pyPS4Controller.controller import Controller
 
-
-class State:
-    """
-    State class
-    """
-
-    def __init__(self, name, theta=0.0, k=0.0, b=0.0) -> None:
-        self._name = name
-
-        # Impedance parameters
-        self._theta = theta
-        self._k = k
-        self._b = b
-
-        # Callbacks
-        self._entry_callbacks: list[Callable[[Any], None]] = []
-        self._exit_callbacks: list[Callable[[Any], None]] = []
-
-    def __eq__(self, __o: object) -> bool:
-        if __o.name == self._name:
-            return True
-        else:
-            return False
-
-    def __ne__(self, __o: object) -> bool:
-        return not self.__eq__(__o)
-
-    def __call__(self, data: Any) -> Any:
-        pass
-
-    def set_impedance_paramters(self, theta, k, b) -> None:
-        self._theta = theta
-        self._k = k
-        self._b = b
-
-    def get_impedance_paramters(self):
-        return self._theta, self._k, self._b
-
-    def on_entry(self, callback: Callable[[Any], None]):
-        self._entry_callbacks.append(callback)
-
-    def on_exit(self, callback: Callable[[Any], None]):
-        self._exit_callbacks.append(callback)
-
-    def start(self, data: Any):
-        print("Entering: ", self._name)
-        for c in self._entry_callbacks:
-            c(data)
-
-    def stop(self, data: Any):
-        print("Exiting: ", self._name)
-        for c in self._exit_callbacks:
-            c(data)
-
-    def increase_theta(self, increment=45.5111):
-        self._theta = self._theta + increment
-
-    def decrease_theta(self, decrement=45.5111):
-        self._theta = self._theta - decrement
-
-    def increase_stiffness(self, increment=10):
-        self._k = self._k + increment
-
-    def decrease_stiffness(self, decrement=10):
-        self._k = self._k - decrement
-
-    def increase_damping(self, increment=10):
-        self._b = self._b + increment
-
-    def decrease_damping(self, decrement=10):
-        self._b = self._b - decrement
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def equilibrium_angle(self):
-        return self._theta
-
-    @property
-    def stiffness(self):
-        return self._k
-
-    @property
-    def damping(self):
-        return self._b
-
-
-class Idle(State):
-    def __init__(self, status="Idle") -> None:
-        self._name = status
-        super().__init__(self._name)
-
-    @property
-    def status(self):
-        return self._name
-
-
-class Event:
-    """
-    Event class
-    """
-
-    def __init__(self, name) -> None:
-        self._name = name
-
-    def __eq__(self, __o: object) -> bool:
-        if __o.name == self._name:
-            return True
-        else:
-            return False
-
-    def __ne__(self, __o: object) -> bool:
-        return not self.__eq__
-
-    @property
-    def name(self):
-        return self._name
-
-
-class Transition:
-    """
-    Transition class
-    """
-
-    def __init__(
-        self,
-        event: Event,
-        source: State,
-        destination: State,
-        callback: Callable[[Any], bool] = None,
-    ) -> None:
-        self._event = event
-        self._source_state = source
-        self._destination_state = destination
-
-        self._criteria: Optional[Callable[[Any], bool]] = callback
-        self._action: Optional[Callable[[Any], None]] = None
-
-    def __call__(self, data: Any) -> Any:
-        raise NotImplementedError
-
-    def add_criteria(self, callback: Callable[[Any], bool]):
-        self._criteria = callback
-
-    def add_action(self, callback: Callable[[Any], Any]):
-        self._action = callback
-
-    @property
-    def event(self):
-        return self._event
-
-    @property
-    def source_state(self):
-        return self._source_state
-
-    @property
-    def destination_state(self):
-        return self._destination_state
-
-
-class FromToTransition(Transition):
-    def __init__(
-        self,
-        event: Event,
-        source: State,
-        destination: State,
-        callback: Callable[[Any], bool] = None,
-    ) -> None:
-        super().__init__(event, source, destination, callback)
-
-        self._from = source
-        self._to = destination
-
-    def __call__(self, data: Any):
-        if not self._criteria or self._criteria(data):
-            if self._action:
-                self._action(data)
-
-            self._from.stop(data)
-            self._to.start(data)
-
-            return self._to
-        else:
-            return self._from
+from oslcontrol.statemachine import *
 
 
 class Data:
@@ -370,16 +185,12 @@ class Joint:
         return self._name
 
 
-class OSL(Controller):
+class OSL:
     """
     The OSL class
     """
 
     def __init__(self, port, baud_rate, debug_level=0) -> None:
-        # Controller Init
-        Controller.__init__(
-            self, interface="/dev/input/js0", connecting_using_ds4drv=False
-        )
 
         self.port = port
         self.baud_rate = baud_rate
@@ -497,50 +308,6 @@ class OSL(Controller):
 
         return transition
 
-    # ---------------------------------------------------------- #
-
-    def on_up_arrow_press(self):
-        self.state_to_be_tuned = self._states[1]
-        print(f"State to be Tuned: {self.state_to_be_tuned.name}")
-
-    def on_right_arrow_press(self):
-        self.state_to_be_tuned = self._states[2]
-        print(f"State to be Tuned: {self.state_to_be_tuned.name}")
-
-    def on_down_arrow_press(self):
-        self.state_to_be_tuned = self._states[3]
-        print(f"State to be Tuned: {self.state_to_be_tuned.name}")
-
-    def on_left_arrow_press(self):
-        self.state_to_be_tuned = self._states[4]
-        print(f"State to be Tuned: {self.state_to_be_tuned.name}")
-
-    def on_R1_press(self):
-        self.state_to_be_tuned.increase_stiffness()
-        print(f"Increased Stiffness of state: {self.state_to_be_tuned.name}")
-
-    def on_L1_press(self):
-        self.state_to_be_tuned.decrease_stiffness()
-        print(f"Decreased Stiffness of state: {self.state_to_be_tuned.name}")
-
-    def on_circle_press(self):
-        self.state_to_be_tuned.increase_damping()
-        print(f"Increased Damping of state: {self.state_to_be_tuned.name}")
-
-    def on_square_press(self):
-        self.state_to_be_tuned.decrease_damping()
-        print(f"Decreased Damping of state: {self.state_to_be_tuned.name}")
-
-    def on_triangle_press(self):
-        self.state_to_be_tuned.increase_theta()
-        print(f"Increased Eq. Angle of state: {self.state_to_be_tuned.name}")
-
-    def on_x_press(self):
-        self.state_to_be_tuned.decrease_theta()
-        print(f"Decreased Eq. Angle of state: {self.state_to_be_tuned.name}")
-
-    # ---------------------------------------------------------- #
-
     def save_state_variables(self):
         jstr = ""
         with open("state_variables.json", "w") as f:
@@ -548,8 +315,6 @@ class OSL(Controller):
                 jstr = jstr + json.dumps(state.__dict__) + "\n"
 
             json.dump(jstr, f)
-
-    # ---------------------------------------------------------- #
 
     def _start_streaming_data(self, frequency=500, log_en=False):
         """
@@ -907,13 +672,10 @@ if __name__ == "__main__":
     start = time.perf_counter()
 
     osl = OSL(port="/dev/ttyACM0", baud_rate=230400)
-
-    walk_thread = threading.Thread(target=osl.walk, args=(45,))
-    controller_thread = threading.Thread(target=osl.listen, args=(45,))
+    walking_thread = threading.Thread(target=osl.walk, args=(45,))
 
     if input("Start walking? (y/n) ") == "y":
-        walk_thread.start()
-        controller_thread.start()
+        walking_thread.start()
 
     finish = time.perf_counter()
     print(f"Script ended at {finish-start:0.4f}")
