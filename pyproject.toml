@@ -37,7 +37,7 @@ python = ">=3.9,<3.11"
 typer = {extras = ["all"], version = "^0.4.0"}
 rich = ">=10.14,<12.0"
 
-flexsea = "^7.2.3"
+flexsea = ">=7.2.3,<9.0.0"
 pyserial = "^3.5"
 
 [tool.poetry.dev-dependencies]
