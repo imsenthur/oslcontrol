@@ -290,6 +290,6 @@ tornado==6.1; python_version >= "3.7" \
     --hash=sha256:d3d20ea5782ba63ed13bc2b8c291a053c8d807a8fa927d941bd718468f7b950c \
     --hash=sha256:548430be2740e327b3fe0201abe471f314741efcb0067ec4f2d7dcfb4825f3e4 \
     --hash=sha256:33c6e81d7bd55b468d2e793517c909b139960b6c790a60b7991b9b6b76fb9791
-typer==0.4.0; python_version >= "3.6" \
-    --hash=sha256:d81169725140423d072df464cad1ff25ee154ef381aaf5b8225352ea187ca338 \
-    --hash=sha256:63c3aeab0549750ffe40da79a1b524f60e08a2cbc3126c520ebf2eeaf507f5dd
+typer==0.4.2; python_version >= "3.6" \
+    --hash=sha256:023bae00d1baf358a6cc7cea45851639360bb716de687b42b0a4641cd99173f1 \
+    --hash=sha256:b8261c6c0152dd73478b5ba96ba677e5d6948c715c310f7c91079f311f62ec03
